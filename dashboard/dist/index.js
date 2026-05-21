@@ -7,7 +7,8 @@
 
   const SDK = window.__HERMES_PLUGIN_SDK__;
   const { React } = SDK;
-  const { Card, CardHeader, CardTitle, CardContent, Badge, Button, Input } = SDK.components;
+  // 🟢 Removed 'Input' from SDK.components to use native HTML <input> safely
+  const { Card, CardHeader, CardTitle, CardContent, Badge, Button } = SDK.components;
   const { useState, useEffect } = SDK.hooks;
   const { cn } = SDK.utils;
 
@@ -21,12 +22,18 @@
       setLoading(true);
       SDK.fetchJSON("/api/plugins/website-monitor/status")
         .then(function (data) {
-          if (data.success) {
-            setMonitors(data.monitors);
+          if (data && data.success) {
+            // 🟢 Null-safety fallback to empty dictionary
+            setMonitors(data.monitors || {});
+          } else {
+            setMessage("Failed to load: backend returned unsuccessful response.");
           }
         })
-        .catch(function () {
-          setMessage("Failed to load monitors from backend.");
+        .catch(function (err) {
+          // 🟢 Prints the actual exception details directly on screen for troubleshooting
+          const errMsg = err ? (err.message || String(err)) : "Unknown Exception";
+          setMessage("Failed to load monitors: " + errMsg);
+          console.error("Website Monitor load error:", err);
         })
         .finally(function () {
           setLoading(false);
@@ -45,19 +52,18 @@
       if (!newUrl.trim()) return;
 
       setLoading(true);
-      // 🟢 Simplified to standard GET call with no method parameter
       SDK.fetchJSON("/api/plugins/website-monitor/add?url=" + encodeURIComponent(newUrl))
         .then(function (data) {
-          if (data.success) {
+          if (data && data.success) {
             setMessage("Successfully added " + newUrl);
             setNewUrl("");
             fetchStatus();
           } else {
-            setMessage("Error: " + data.error);
+            setMessage("Error: " + (data ? data.error : "Unknown Error"));
           }
         })
-        .catch(function () {
-          setMessage("API request failed.");
+        .catch(function (err) {
+          setMessage("API request failed: " + (err ? err.message : String(err)));
         })
         .finally(function () {
           setLoading(false);
@@ -68,25 +74,26 @@
       if (!confirm("Are you sure you want to stop monitoring " + url + "?")) return;
       
       setLoading(true);
-      // 🟢 Simplified to standard GET call with no method parameter
       SDK.fetchJSON("/api/plugins/website-monitor/remove?url=" + encodeURIComponent(url))
         .then(function (data) {
-          if (data.success) {
+          if (data && data.success) {
             setMessage("Removed " + url);
             fetchStatus();
           } else {
-            setMessage("Error: " + data.error);
+            setMessage("Error: " + (data ? data.error : "Unknown Error"));
           }
         })
-        .catch(function () {
-          setMessage("API request failed.");
+        .catch(function (err) {
+          setMessage("API request failed: " + (err ? err.message : String(err)));
         })
         .finally(function () {
           setLoading(false);
         });
     }
 
-    const monitorList = Object.keys(monitors);
+    // 🟢 Null-safety fallbacks for monitors list
+    const monitorsSafe = monitors || {};
+    const monitorList = Object.keys(monitorsSafe);
 
     return React.createElement("div", { className: "flex flex-col gap-6 p-4" },
       // Header & URL Input Controller Card
@@ -99,20 +106,21 @@
             )
           )
         ),
-        React.createElement(CardContent, { className: "flex flex-col gap-4" },
+React.createElement(CardContent, { className: "flex flex-col gap-4" },
           React.createElement("p", { className: "text-sm text-muted-foreground" },
             "Add and manage URLs for real-time uptime checks. Background checks occur silently every 60 seconds."
           ),
           
           // Form to Add Monitor
           React.createElement("form", { onSubmit: handleAdd, className: "flex items-center gap-3 mt-2" },
-            React.createElement(Input, {
+            // 🟢 Changed from <Input> component to native HTML <input> tag with exact same styling classes
+            React.createElement("input", {
               type: "text",
               placeholder: "https://mywebsite.com",
               value: newUrl,
-onChange: function (e) { setNewUrl(e.target.value); },
+              onChange: function (e) { setNewUrl(e.target.value); },
               disabled: loading,
-              className: "flex-1 border border-border px-3 py-2 text-sm bg-background/50"
+              className: "flex-1 border border-border rounded-md px-3 py-2 text-sm bg-background/50 h-9 outline-none focus:ring-1 focus:ring-ring"
             }),
             React.createElement(Button, {
               type: "submit",
@@ -137,7 +145,8 @@ onChange: function (e) { setNewUrl(e.target.value); },
             ) :
             React.createElement("div", { className: "divide-y divide-border" },
               monitorList.map(function (url) {
-                const status = monitors[url].last_status || "UNKNOWN";
+                const monitorInfo = monitorsSafe[url] || {};
+                const status = monitorInfo.last_status || "UNKNOWN";
                 const isUp = status === "UP";
                 const isDown = status === "DOWN";
                 const badgeVariant = isUp ? "success" : (isDown ? "destructive" : "secondary");
