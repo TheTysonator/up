@@ -1,4 +1,4 @@
-name: website-monitor
+name: uptime
 version: 1.0.0
 description: "Monitors website uptime in the background and sends chat alerts. Includes tools and an interactive Web Dashboard Tab."
 author: "Tylan"
