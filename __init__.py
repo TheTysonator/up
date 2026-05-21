@@ -16,6 +16,8 @@ from tools.send_message_tool import send_message_tool
 
 logger = logging.getLogger(__name__)
 
+_background_tasks = set()
+
 # Config files are saved under the active Hermes home profile folder
 def _get_config_path() -> Path:
     return get_hermes_home() / "website_monitors.json"
@@ -144,7 +146,14 @@ def register(ctx) -> None:
         emoji="📋"
     )
     
-    # 2. Schedule the background task on the main running event loop
+    # 2. Schedule task and keep a strong reference to prevent GC deletion
     loop = asyncio.get_event_loop()
-    loop.create_task(_async_background_monitor_loop())
+    task = loop.create_task(_async_background_monitor_loop())
+    
+    # Add to our global set to keep the reference alive
+    _background_tasks.add(task)
+    
+    # Automatically clean up the set reference if the task ever exits
+    task.add_done_callback(_background_tasks.discard)
+    
     logger.info("Website Monitor task scheduled successfully on event loop.")
