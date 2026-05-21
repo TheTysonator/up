@@ -20,7 +20,7 @@
 
     function fetchStatus() {
       setLoading(true);
-      SDK.fetchJSON("/api/plugins/website-monitor/status")
+      SDK.fetchJSON("/api/plugins/uptime/status")
         .then(function (data) {
           if (data && data.success) {
             // 🟢 Null-safety fallback to empty dictionary
@@ -52,7 +52,7 @@
       if (!newUrl.trim()) return;
 
       setLoading(true);
-      SDK.fetchJSON("/api/plugins/website-monitor/add?url=" + encodeURIComponent(newUrl))
+      SDK.fetchJSON("/api/plugins/uptime/add?url=" + encodeURIComponent(newUrl))
         .then(function (data) {
           if (data && data.success) {
             setMessage("Successfully added " + newUrl);
@@ -74,7 +74,7 @@
       if (!confirm("Are you sure you want to stop monitoring " + url + "?")) return;
       
       setLoading(true);
-      SDK.fetchJSON("/api/plugins/website-monitor/remove?url=" + encodeURIComponent(url))
+      SDK.fetchJSON("/api/plugins/uptime/remove?url=" + encodeURIComponent(url))
         .then(function (data) {
           if (data && data.success) {
             setMessage("Removed " + url);
@@ -174,5 +174,5 @@ React.createElement(CardContent, { className: "flex flex-col gap-4" },
   }
 
   // Register the tab in the dashboard shell
-  window.__HERMES_PLUGINS__.register("website-monitor", WebsiteMonitorPage);
+  window.__HERMES_PLUGINS__.register("uptime", WebsiteMonitorPage);
 })();
