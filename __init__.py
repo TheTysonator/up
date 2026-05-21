@@ -98,7 +98,7 @@ def _background_monitor_loop() -> None:
                                     "message": alert_msg
                                 })
                             except Exception:
-                                pass # Suppress if specific platform is not enabled
+                                logger.exception(f"Failed to send alert to {platform}: {e}")
 
             if changed:
                 _save_monitors(monitors)
