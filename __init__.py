@@ -145,7 +145,7 @@ def register(ctx) -> None:
 
     ctx.register_tool(
         name="add_monitor",
-        toolset="website_monitor",
+        toolset="uptime",
         schema=ADD_MONITOR_SCHEMA,
         handler=_handle_add_monitor,
         emoji="➕",
@@ -153,7 +153,7 @@ def register(ctx) -> None:
 
     ctx.register_tool(
         name="remove_monitor",
-        toolset="website_monitor",
+        toolset="uptime",
         schema=REMOVE_MONITOR_SCHEMA,
         handler=_handle_remove_monitor,
         emoji="❌",
@@ -161,7 +161,7 @@ def register(ctx) -> None:
 
     ctx.register_tool(
         name="list_monitors",
-        toolset="website_monitor",
+        toolset="uptime",
         schema=LIST_MONITORS_SCHEMA,
         handler=_handle_list_monitors,
         emoji="📋",
