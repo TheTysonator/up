@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import threading
@@ -11,21 +10,21 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict
 
-# Import profile-safe paths from Hermes
 from hermes_constants import get_hermes_home
 
 logger = logging.getLogger(__name__)
 
-# Config files are saved under the active Hermes home profile folder
+
 def _get_config_path() -> Path:
     return get_hermes_home() / "website_monitors.json"
 
 
 def _load_monitors() -> Dict[str, Dict[str, Any]]:
-    """Loads monitor states from disk."""
     path = _get_config_path()
+
     if not path.exists():
         return {}
+
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
@@ -35,6 +34,7 @@ def _load_monitors() -> Dict[str, Dict[str, Any]]:
 
 def _save_monitors(monitors: Dict[str, Dict[str, Any]]) -> None:
     path = _get_config_path()
+
     try:
         path.write_text(json.dumps(monitors, indent=2), encoding="utf-8")
     except Exception as e:
@@ -42,79 +42,96 @@ def _save_monitors(monitors: Dict[str, Dict[str, Any]]) -> None:
 
 
 def _check_website(url: str) -> bool:
-    """Performs a lightweight HTTP GET with a 5-second timeout."""
     try:
         req = urllib.request.Request(
-            url, 
-            headers={"User-Agent": "Hermes-Website-Monitor/1.0"}
+            url,
+            headers={"User-Agent": "Hermes-Website-Monitor/1.0"},
         )
+
         with urllib.request.urlopen(req, timeout=5) as response:
             return 200 <= response.status < 300
+
     except Exception:
         return False
 
 
-def _background_monitor_loop() -> None:
-    """Continuously runs in the background. Alerts only on transitions."""
-    # Wait for the gateway process to fully settle and start its event loop
+def _send_alert(ctx, target_room: str, message: str) -> None:
+    """
+    Sends a Hermes message using the plugin context.
+
+    Do NOT import gateway.run.gateway directly here.
+    The ctx object is the correct bridge back into Hermes.
+    """
+    try:
+        result = ctx.dispatch_tool(
+            "send_message",
+            {
+                "target": target_room,
+                "message": message,
+            },
+        )
+
+        logger.info(f"Website monitor alert dispatched: {result}")
+
+    except Exception:
+        logger.exception("Failed to dispatch website monitor alert")
+
+
+def _background_monitor_loop(ctx) -> None:
+    """
+    Continuously checks websites in the background.
+
+    Alerts only when a monitor changes from UP -> DOWN or DOWN -> UP.
+    """
     time.sleep(15)
-    
+
     logger.info("Website Monitor background thread started successfully.")
-    
+
+    target_room = "matrix:!OYULNHNYLFWZECSVXK:HMX.SH"
+
     while True:
         try:
             monitors = _load_monitors()
             changed = False
-            
+
             for url, info in list(monitors.items()):
                 is_up = _check_website(url)
+
                 current_status = "UP" if is_up else "DOWN"
                 old_status = info.get("last_status", "UNKNOWN")
-                
-                # Check for status change transition
+
                 if current_status != old_status:
                     monitors[url]["last_status"] = current_status
                     changed = True
-                    
-                    # ⚠️ ALERT TRANSITION CHAT TRIGGER
+
+                    logger.info(
+                        f"Monitor status changed for {url}: "
+                        f"{old_status} -> {current_status}"
+                    )
+
+                    # Do not alert on first-ever check.
                     if old_status != "UNKNOWN":
                         alert_icon = "🟢" if is_up else "🔴"
+
                         alert_msg = (
                             f"{alert_icon} **WEBSITE UPTIME MONITOR ALERT**\n\n"
-                            f"The website **{url}** went from **{old_status}** ➡️ **{current_status}**!"
+                            f"The website **{url}** went from "
+                            f"**{old_status}** ➡️ **{current_status}**!"
                         )
-                        
-                        target_room = "matrix:!OYULNHNYLFWZECSVXK:HMX.SH"
-                        
-                        try:
-                            # 1. Import the running gateway directly from the gateway runner
-                            from gateway.run import gateway
-                            
-                            # 2. Check if the gateway is running and has an active event loop
-                            if gateway and gateway.loop and gateway.loop.is_running():
-                                # 3. Safely schedule the async message send on the gateway's main event loop
-                                asyncio.run_coroutine_threadsafe(
-                                    gateway.send_message(target_room, alert_msg),
-                                    gateway.loop
-                                )
-                                logger.info(f"Successfully dispatched alert for {url} to gateway loop.")
-                            else:
-                                logger.warning("Gateway event loop is not active yet.")
-                        except Exception as e:
-                            logger.error(f"Failed to send uptime alert for {url}: {e}")
+
+                        _send_alert(ctx, target_room, alert_msg)
 
             if changed:
                 _save_monitors(monitors)
-                
-        except Exception as e:
-            logger.error(f"Error in Website Monitor loop: {e}")
-            
-        # Poll every 60 seconds
+
+        except Exception:
+            logger.exception("Error in Website Monitor loop")
+
         time.sleep(60)
 
 
 def register(ctx) -> None:
-    """Registers tools and fires up the background monitoring thread."""
+    """Registers tools and starts the background monitoring thread."""
     from .tools import (
         ADD_MONITOR_SCHEMA,
         REMOVE_MONITOR_SCHEMA,
@@ -123,31 +140,37 @@ def register(ctx) -> None:
         _handle_remove_monitor,
         _handle_list_monitors,
     )
-    
-    # 1. Register tools (perfectly safe, no asyncio event loop calls)
+
     ctx.register_tool(
         name="add_monitor",
         toolset="website_monitor",
         schema=ADD_MONITOR_SCHEMA,
         handler=_handle_add_monitor,
-        emoji="➕"
+        emoji="➕",
     )
+
     ctx.register_tool(
         name="remove_monitor",
         toolset="website_monitor",
         schema=REMOVE_MONITOR_SCHEMA,
         handler=_handle_remove_monitor,
-        emoji="❌"
+        emoji="❌",
     )
+
     ctx.register_tool(
         name="list_monitors",
         toolset="website_monitor",
         schema=LIST_MONITORS_SCHEMA,
         handler=_handle_list_monitors,
-        emoji="📋"
+        emoji="📋",
     )
-    
-    # 2. Spawn the background monitoring thread (100% safe from the plugin loader thread)
-    monitor_thread = threading.Thread(target=_background_monitor_loop, daemon=True)
+
+    monitor_thread = threading.Thread(
+        target=_background_monitor_loop,
+        args=(ctx,),
+        daemon=True,
+    )
+
     monitor_thread.start()
+
     logger.info("Website Monitor background thread registered successfully.")
