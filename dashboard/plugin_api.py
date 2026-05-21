@@ -5,7 +5,8 @@ Mounted at /api/plugins/website-monitor/ by the plugin system.
 import json
 from pathlib import Path
 from fastapi import APIRouter, Query
-from hermes_constants import get_hermes_home
+# 🟢 CORRECT CANONICAL IMPORT FOR DASHBOARD ROUTING
+from hermes_cli.config import get_hermes_home
 
 router = APIRouter()
 
@@ -35,7 +36,7 @@ async def status():
     return {"success": True, "monitors": _load_monitors()}
 
 
-@router.get("/add")  # 🟢 Changed from @router.post to @router.get
+@router.get("/add")
 async def add(url: str = Query(...)):
     """Add a new URL to monitoring."""
     url = url.strip()
@@ -49,7 +50,7 @@ async def add(url: str = Query(...)):
     return {"success": True, "message": f"Added {url}."}
 
 
-@router.get("/remove")  # 🟢 Changed from @router.post to @router.get
+@router.get("/remove")
 async def remove(url: str = Query(...)):
     """Remove a URL from monitoring."""
     url = url.strip()
