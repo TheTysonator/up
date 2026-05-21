@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
-import threading
-import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict
@@ -22,9 +22,7 @@ def _get_config_path() -> Path:
 
 
 def _load_monitors() -> Dict[str, Dict[str, Any]]:
-    """Loads monitor states from disk.
-    Format: { "https://example.com": {"last_status": "UP"} }
-    """
+    """Loads monitor states from disk."""
     path = _get_config_path()
     if not path.exists():
         return {}
@@ -51,25 +49,27 @@ def _check_website(url: str) -> bool:
             headers={"User-Agent": "Hermes-Website-Monitor/1.0"}
         )
         with urllib.request.urlopen(req, timeout=5) as response:
-            return response.status == 200
+            return 200 <= response.status < 300
     except Exception:
         return False
 
 
-def _background_monitor_loop() -> None:
+async def _async_background_monitor_loop() -> None:
     """Continuously runs in the background. Alerts only on transitions."""
     # Wait for the gateway process to settle
-    time.sleep(15)
+    await asyncio.sleep(15)
     
-    logger.info("Website Monitor background thread started.")
+    logger.info("Website Monitor background task started (Async).")
     
     while True:
         try:
-            monitors = _load_monitors()
+            # Load monitors in a thread pool to avoid blocking the loop
+            monitors = await asyncio.to_thread(_load_monitors)
             changed = False
             
             for url, info in list(monitors.items()):
-                is_up = _check_website(url)
+                # Check website in a thread pool to keep gateway snappy
+                is_up = await asyncio.to_thread(_check_website, url)
                 current_status = "UP" if is_up else "DOWN"
                 old_status = info.get("last_status", "UNKNOWN")
                 
@@ -78,39 +78,40 @@ def _background_monitor_loop() -> None:
                     monitors[url]["last_status"] = current_status
                     changed = True
                     
-                    # ⚠️ ALERT TRANSITION CHAT TRIGGER
-                    if old_status != "UNKNOWN":
+                    # Alert if transitioning from a known state OR if it initially fails
+                    if old_status != "UNKNOWN" or current_status == "DOWN":
                         alert_icon = "🟢" if is_up else "🔴"
                         alert_msg = (
                             f"{alert_icon} **WEBSITE UPTIME MONITOR ALERT**\n\n"
                             f"The website **{url}** went from **{old_status}** ➡️ **{current_status}**!"
                         )
                         
-                        # Deliver to the user's active messaging platform's home channel
-                        # Supported platforms: 'matrix', 'telegram', 'discord', 'slack'
-                        # It will automatically fall back to whichever platform is running!
+                        # Attempt delivery to active messaging platforms
                         for platform in ["matrix", "telegram", "discord"]:
                             try:
-                                # send_message_tool has a built-in async-to-sync runner, making it safe to call here
-                                send_message_tool({
+                                res = send_message_tool({
                                     "action": "send",
                                     "target": f"{platform}",
                                     "message": alert_msg
                                 })
-                            except Exception:
-                                logger.exception(f"Failed to send alert to {platform}: {e}")
+                                # If the tool returned a coroutine, await it on the event loop
+                                if inspect.isawaitable(res):
+                                    await res
+                            except Exception as e:
+                                logger.warning(f"Failed to send alert to {platform}: {e}")
 
             if changed:
-                _save_monitors(monitors)
+                await asyncio.to_thread(_save_monitors, monitors)
                 
         except Exception as e:
             logger.error(f"Error in Website Monitor loop: {e}")
-# Poll every 60 seconds
-        time.sleep(60)
+
+        # Sleep asynchronously for 60 seconds (non-blocking)
+        await asyncio.sleep(60)
 
 
 def register(ctx) -> None:
-    """Registers tools and fires up the background monitoring thread."""
+    """Registers tools and fires up the background monitoring task."""
     from .tools import (
         ADD_MONITOR_SCHEMA,
         REMOVE_MONITOR_SCHEMA,
@@ -120,7 +121,7 @@ def register(ctx) -> None:
         _handle_list_monitors,
     )
     
-    # 1. Register tools into the Website Monitor toolset
+    # 1. Register tools
     ctx.register_tool(
         name="add_monitor",
         toolset="website_monitor",
@@ -143,6 +144,7 @@ def register(ctx) -> None:
         emoji="📋"
     )
     
-    # 2. Spawn the background polling thread
-    monitor_thread = threading.Thread(target=_background_monitor_loop, daemon=True)
-    monitor_thread.start()
+    # 2. Schedule the background task on the main running event loop
+    loop = asyncio.get_event_loop()
+    loop.create_task(_async_background_monitor_loop())
+    logger.info("Website Monitor task scheduled successfully on event loop.")
