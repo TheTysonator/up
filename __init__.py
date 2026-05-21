@@ -1,5 +1,7 @@
 """Website Monitor Plugin for Hermes Agent."""
 
+# uptime, polaris, plugin room
+
 from __future__ import annotations
 
 import json
