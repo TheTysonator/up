@@ -35,7 +35,7 @@ async def status():
     return {"success": True, "monitors": _load_monitors()}
 
 
-@router.post("/add")
+@router.get("/add")  # 🟢 Changed from @router.post to @router.get
 async def add(url: str = Query(...)):
     """Add a new URL to monitoring."""
     url = url.strip()
@@ -49,7 +49,7 @@ async def add(url: str = Query(...)):
     return {"success": True, "message": f"Added {url}."}
 
 
-@router.post("/remove")
+@router.get("/remove")  # 🟢 Changed from @router.post to @router.get
 async def remove(url: str = Query(...)):
     """Remove a URL from monitoring."""
     url = url.strip()

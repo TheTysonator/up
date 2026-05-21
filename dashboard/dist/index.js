@@ -45,9 +45,8 @@
       if (!newUrl.trim()) return;
 
       setLoading(true);
-      SDK.fetchJSON("/api/plugins/website-monitor/add?url=" + encodeURIComponent(newUrl), {
-        method: "POST"
-      })
+      // 🟢 Simplified to standard GET call with no method parameter
+      SDK.fetchJSON("/api/plugins/website-monitor/add?url=" + encodeURIComponent(newUrl))
         .then(function (data) {
           if (data.success) {
             setMessage("Successfully added " + newUrl);
@@ -69,9 +68,8 @@
       if (!confirm("Are you sure you want to stop monitoring " + url + "?")) return;
       
       setLoading(true);
-      SDK.fetchJSON("/api/plugins/website-monitor/remove?url=" + encodeURIComponent(url), {
-        method: "POST"
-      })
+      // 🟢 Simplified to standard GET call with no method parameter
+      SDK.fetchJSON("/api/plugins/website-monitor/remove?url=" + encodeURIComponent(url))
         .then(function (data) {
           if (data.success) {
             setMessage("Removed " + url);
@@ -112,9 +110,9 @@
               type: "text",
               placeholder: "https://mywebsite.com",
               value: newUrl,
-              onChange: function (e) { setNewUrl(e.target.value); },
+onChange: function (e) { setNewUrl(e.target.value); },
               disabled: loading,
-className: "flex-1 border border-border px-3 py-2 text-sm bg-background/50"
+              className: "flex-1 border border-border px-3 py-2 text-sm bg-background/50"
             }),
             React.createElement(Button, {
               type: "submit",
