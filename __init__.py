@@ -162,3 +162,9 @@ def register(ctx) -> None:
     loop = asyncio.get_event_loop()
     loop.create_task(_async_background_monitor_loop())
     logger.info("Website Monitor task scheduled successfully on event loop.")
+
+    send_message_tool({
+        "action": "send",
+        "target": "matrix:!oyulNhNylFWzeCsVXk:hmx.sh",
+        "message": "✅ Website Monitor Plugin has been registered and is now active!"
+    })
