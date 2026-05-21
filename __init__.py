@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
+import threading
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict
 
 # Import profile-safe paths from Hermes
 from hermes_constants import get_hermes_home
-from tools.send_message_tool import send_message_tool
 
 logger = logging.getLogger(__name__)
-
-_background_tasks = set()
 
 # Config files are saved under the active Hermes home profile folder
 def _get_config_path() -> Path:
@@ -56,22 +54,20 @@ def _check_website(url: str) -> bool:
         return False
 
 
-async def _async_background_monitor_loop() -> None:
+def _background_monitor_loop() -> None:
     """Continuously runs in the background. Alerts only on transitions."""
     # Wait for the gateway process to settle
-    await asyncio.sleep(15)
+    time.sleep(15)
     
-    logger.info("Website Monitor background task started (Async).")
+    logger.info("Website Monitor background thread started.")
     
     while True:
         try:
-            # Load monitors in a thread pool to avoid blocking the loop
-            monitors = await asyncio.to_thread(_load_monitors)
+            monitors = _load_monitors()
             changed = False
             
             for url, info in list(monitors.items()):
-                # Check website in a thread pool to keep gateway snappy
-                is_up = await asyncio.to_thread(_check_website, url)
+                is_up = _check_website(url)
                 current_status = "UP" if is_up else "DOWN"
                 old_status = info.get("last_status", "UNKNOWN")
                 
@@ -80,40 +76,47 @@ async def _async_background_monitor_loop() -> None:
                     monitors[url]["last_status"] = current_status
                     changed = True
                     
-                    # Alert if transitioning from a known state OR if it initially fails
-                    if old_status != "UNKNOWN" or current_status == "DOWN":
+                    # ⚠️ ALERT TRANSITION CHAT TRIGGER
+                    if old_status != "UNKNOWN":
                         alert_icon = "🟢" if is_up else "🔴"
                         alert_msg = (
                             f"{alert_icon} **WEBSITE UPTIME MONITOR ALERT**\n\n"
                             f"The website **{url}** went from **{old_status}** ➡️ **{current_status}**!"
                         )
                         
-                        # Explicitly target your home room from your gateway logs
                         target_room = "matrix:!OYULNHNYLFWZECSVXK:HMX.SH"
-                            
+                        
                         try:
-                            # send_message_tool is synchronous, call it directly
-                            send_message_tool({
-                                "action": "send",
-                                "target": target_room,
-                                "message": alert_msg
-                            })
+                            # 1. Import the running gateway directly from the gateway module
+                            from gateway.run import gateway
+                            
+                            # 2. Get the gateway's active running event loop
+                            if gateway and gateway.loop and gateway.loop.is_running():
+                                # 3. Call gateway's send_message directly (which is a real async coroutine)
+                                # and safely schedule it on the gateway's running event loop
+                                asyncio.run_coroutine_threadsafe(
+                                    gateway.send_message(target_room, alert_msg),
+                                    gateway.loop
+                                )
+                                logger.info(f"Dispatched uptime alert for {url} to gateway loop.")
+                            else:
+                                logger.warning("Gateway event loop is not running yet.")
+                                
                         except Exception as e:
                             logger.error(f"Failed to send uptime alert: {e}")
 
-
             if changed:
-                await asyncio.to_thread(_save_monitors, monitors)
+                _save_monitors(monitors)
                 
         except Exception as e:
             logger.error(f"Error in Website Monitor loop: {e}")
-
-        # Sleep asynchronously for 60 seconds (non-blocking)
-        await asyncio.sleep(60)
+            
+        # Poll every 60 seconds
+        time.sleep(60)
 
 
 def register(ctx) -> None:
-    """Registers tools and fires up the background monitoring task."""
+    """Registers tools and fires up the background monitoring thread."""
     from .tools import (
         ADD_MONITOR_SCHEMA,
         REMOVE_MONITOR_SCHEMA,
@@ -146,14 +149,7 @@ def register(ctx) -> None:
         emoji="📋"
     )
     
-    # 2. Schedule task and keep a strong reference to prevent GC deletion
-    loop = asyncio.get_event_loop()
-    task = loop.create_task(_async_background_monitor_loop())
-    
-    # Add to our global set to keep the reference alive
-    _background_tasks.add(task)
-    
-    # Automatically clean up the set reference if the task ever exits
-    task.add_done_callback(_background_tasks.discard)
-    
-    logger.info("Website Monitor task scheduled successfully on event loop.")
+    # 2. Spawn the background monitoring thread
+    monitor_thread = threading.Thread(target=_background_monitor_loop, daemon=True)
+    monitor_thread.start()
+    logger.info("Website Monitor background thread registered successfully.")
