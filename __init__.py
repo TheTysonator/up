@@ -163,8 +163,12 @@ def register(ctx) -> None:
     loop.create_task(_async_background_monitor_loop())
     logger.info("Website Monitor task scheduled successfully on event loop.")
 
-    send_message_tool({
-        "action": "send",
-        "target": "matrix:!oyulNhNylFWzeCsVXk:hmx.sh",
-        "message": "✅ Website Monitor Plugin has been registered and is now active!"
-    })
+    try:
+
+        send_message_tool({
+            "action": "send",
+            "target": "matrix:!oyulNhNylFWzeCsVXk:hmx.sh",
+            "message": "✅ Website Monitor Plugin has been registered and is now active!"
+        })
+    except Exception as e:
+        logger.error(f"Error in Website Monitor loop: {e}")
