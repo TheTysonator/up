@@ -1,0 +1,9 @@
+name: website-monitor
+version: 1.0.0
+description: "Monitors website uptime in the background and sends chat alerts. Includes tools for the agent to manage URLs."
+author: "Tylan"
+kind: backend
+provides_tools:
+  - add_monitor
+  - remove_monitor
+  - list_monitors
