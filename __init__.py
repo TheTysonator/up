@@ -87,7 +87,7 @@ def _background_monitor_loop(ctx) -> None:
 
     logger.info("Website Monitor background thread started successfully.")
 
-    target_room = "matrix:!OYULNHNYLFWZECSVXK:HMX.SH"
+    target_room = "matrix:!RCoAgzyLWmmeLSIfPF:hmx.sh"
 
     while True:
         try:
