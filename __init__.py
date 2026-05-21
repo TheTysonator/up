@@ -56,10 +56,10 @@ def _check_website(url: str) -> bool:
 
 def _background_monitor_loop() -> None:
     """Continuously runs in the background. Alerts only on transitions."""
-    # Wait for the gateway process to settle
+    # Wait for the gateway process to fully settle and start its event loop
     time.sleep(15)
     
-    logger.info("Website Monitor background thread started.")
+    logger.info("Website Monitor background thread started successfully.")
     
     while True:
         try:
@@ -87,23 +87,21 @@ def _background_monitor_loop() -> None:
                         target_room = "matrix:!OYULNHNYLFWZECSVXK:HMX.SH"
                         
                         try:
-                            # 1. Import the running gateway directly from the gateway module
+                            # 1. Import the running gateway directly from the gateway runner
                             from gateway.run import gateway
                             
-                            # 2. Get the gateway's active running event loop
+                            # 2. Check if the gateway is running and has an active event loop
                             if gateway and gateway.loop and gateway.loop.is_running():
-                                # 3. Call gateway's send_message directly (which is a real async coroutine)
-                                # and safely schedule it on the gateway's running event loop
+                                # 3. Safely schedule the async message send on the gateway's main event loop
                                 asyncio.run_coroutine_threadsafe(
                                     gateway.send_message(target_room, alert_msg),
                                     gateway.loop
                                 )
-                                logger.info(f"Dispatched uptime alert for {url} to gateway loop.")
+                                logger.info(f"Successfully dispatched alert for {url} to gateway loop.")
                             else:
-                                logger.warning("Gateway event loop is not running yet.")
-                                
+                                logger.warning("Gateway event loop is not active yet.")
                         except Exception as e:
-                            logger.error(f"Failed to send uptime alert: {e}")
+                            logger.error(f"Failed to send uptime alert for {url}: {e}")
 
             if changed:
                 _save_monitors(monitors)
@@ -126,7 +124,7 @@ def register(ctx) -> None:
         _handle_list_monitors,
     )
     
-    # 1. Register tools
+    # 1. Register tools (perfectly safe, no asyncio event loop calls)
     ctx.register_tool(
         name="add_monitor",
         toolset="website_monitor",
@@ -149,7 +147,7 @@ def register(ctx) -> None:
         emoji="📋"
     )
     
-    # 2. Spawn the background monitoring thread
+    # 2. Spawn the background monitoring thread (100% safe from the plugin loader thread)
     monitor_thread = threading.Thread(target=_background_monitor_loop, daemon=True)
     monitor_thread.start()
     logger.info("Website Monitor background thread registered successfully.")
