@@ -80,25 +80,39 @@ async def _async_background_monitor_loop() -> None:
                     
                     # Alert if transitioning from a known state OR if it initially fails
                     if old_status != "UNKNOWN" or current_status == "DOWN":
+                        # Target your specific home room directly from the logs
+                        target_room = "matrix:!oyulNhNylFWzeCsVXk:hmx.sh"
+                        
                         alert_icon = "🟢" if is_up else "🔴"
                         alert_msg = (
                             f"{alert_icon} **WEBSITE UPTIME MONITOR ALERT**\n\n"
                             f"The website **{url}** went from **{old_status}** ➡️ **{current_status}**!"
                         )
                         
-                        # Attempt delivery to active messaging platforms
-                        for platform in ["matrix", "telegram", "discord"]:
-                            try:
-                                res = send_message_tool({
-                                    "action": "send",
-                                    "target": f"{platform}",
-                                    "message": alert_msg
-                                })
-                                # If the tool returned a coroutine, await it on the event loop
-                                if inspect.isawaitable(res):
-                                    await res
-                            except Exception as e:
-                                logger.warning(f"Failed to send alert to {platform}: {e}")
+                        try:
+                            # 1. Prepare the payload
+                            payload = {
+                                "action": "send",
+                                "target": target_room,
+                                "message": alert_msg
+                            }
+                            
+                            # 2. Get the gateway's main event loop
+                            main_loop = asyncio.get_event_loop()
+                            
+                            # 3. Safely schedule the send task on the main thread's loop
+                            if main_loop.is_running():
+                                asyncio.run_coroutine_threadsafe(
+                                    send_message_tool(payload), 
+                                    main_loop
+                                )
+                            else:
+                                # Fallback if called before loop is fully running
+                                send_message_tool(payload)
+                                
+                        except Exception as e:
+                            logger.error(f"Failed to send uptime alert: {e}")
+
 
             if changed:
                 await asyncio.to_thread(_save_monitors, monitors)
