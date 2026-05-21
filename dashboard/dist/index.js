@@ -1,24 +1,42 @@
 (function () {
 "use strict";
 
-const SDK = window.HERMES_PLUGIN_SDK;
+// 🟢 Defensive Null-Safety: Fallback to an empty object if SDK is not ready yet
+const SDK = window.HERMES_PLUGIN_SDK || {};
 
-// 🟢 Defensive fallback to prevent destructuring or timing errors
+// 🟢 Fallback to global window.React if SDK.React is undefined
 const React = SDK.React || window.React;
-const { Card, CardHeader, CardTitle, CardContent, Badge, Button } = SDK.components;
-const { useState, useEffect } = SDK.hooks;
-const { cn } = SDK.utils;
+
+// 🟢 Fallback safe destructuring for UI components
+const components = SDK.components || {};
+const { Card, CardHeader, CardTitle, CardContent, Badge, Button } = components;
+
+// 🟢 Fallback safe destructuring for React hooks
+const hooks = SDK.hooks || {};
+const useState = hooks.useState || (window.React ? window.React.useState : null);
+const useEffect = hooks.useEffect || (window.React ? window.React.useEffect : null);
+
+// 🟢 Fallback to standard window.fetch if SDK.fetchJSON is undefined
+const fetchJSON = SDK.fetchJSON || function (url, options) {
+return fetch(url, options).then(function (res) { return res.json(); });
+};
 
 function WebsiteMonitorPage() {
+// Graceful error state if React hooks are missing
+if (!useState || !useEffect) {
+return React.createElement("div", { className: "p-4 text-destructive font-mono text-sm" },
+"CRITICAL ERROR: React hooks are missing from global scope."
+);
+}
 const [monitors, setMonitors] = useState({});
 const [newUrl, setNewUrl] = useState("");
-const [appName, setAppName] = useState(""); // 🟢 Added state for App Name
+const [appName, setAppName] = useState(""); // State for App Name
 const [loading, setLoading] = useState(false);
 const [message, setMessage] = useState(null);
 
 function fetchStatus() {
   setLoading(true);
-  SDK.fetchJSON("/api/plugins/uptime/status")
+  fetchJSON("/api/plugins/uptime/status")
     .then(function (data) {
       if (data && data.success) {
         setMonitors(data.monitors || {});
@@ -49,36 +67,35 @@ function handleAdd(e) {
 
   setLoading(true);
 
-  // 🟢 Build API Path, appending optional app name parameter if present
+  // Build API Path, appending optional app name parameter if present
   let apiPath = "/api/plugins/uptime/add?url=" + encodeURIComponent(newUrl);
   if (appName.trim()) {
     apiPath += "&app=" + encodeURIComponent(appName.trim());
   }
 
-  SDK.fetchJSON(apiPath)
+  fetchJSON(apiPath)
     .then(function (data) {
       if (data && data.success) {
         setMessage("Successfully added " + newUrl + (appName.trim() ? " under '" + appName.trim() + "'" : ""));
         setNewUrl("");
-        setAppName(""); // 🟢 Reset App Name field
+        setAppName(""); // Reset App Name field
         fetchStatus();
       } else {
         setMessage("Error: " + (data ? data.error : "Unknown Error"));
       }
     })
     .catch(function (err) {
-      setMessage("API request failed: " + (err ? err.message : String(err)));
-    })
-    .finally(function () {
-      setLoading(false);
-    });
+setMessage("API request failed: " + (err ? err.message : String(err)));
+})
+.finally(function () {
+setLoading(false);
+});
 }
-
 function handleRemove(url) {
   if (!confirm("Are you sure you want to stop monitoring " + url + "?")) return;
 
   setLoading(true);
-  SDK.fetchJSON("/api/plugins/uptime/remove?url=" + encodeURIComponent(url))
+  fetchJSON("/api/plugins/uptime/remove?url=" + encodeURIComponent(url))
     .then(function (data) {
       if (data && data.success) {
         setMessage("Removed " + url);
@@ -94,10 +111,11 @@ function handleRemove(url) {
       setLoading(false);
     });
 }
+
 const monitorsSafe = monitors || {};
 const monitorList = Object.keys(monitorsSafe);
 
-// 🟢 Group monitors dynamically by associated application metadata
+// Group monitors dynamically by associated application metadata
 const groups = {};
 monitorList.forEach(function (url) {
   const monitorInfo = monitorsSafe[url] || {};
@@ -108,7 +126,7 @@ monitorList.forEach(function (url) {
   groups[category].push({ url: url, info: monitorInfo });
 });
 
-// 🟢 Sort categories alphabetically, keeping "Uncategorized" pinned at the very bottom
+// Sort categories alphabetically, keeping "Uncategorized" pinned at the very bottom
 const groupNames = Object.keys(groups).sort(function (a, b) {
   if (a === "Uncategorized") return 1;
   if (b === "Uncategorized") return -1;
@@ -155,26 +173,25 @@ return React.createElement("div", { className: "flex flex-col gap-6 p-4" },
           className: "bg-primary text-primary-foreground font-semibold px-4 py-2 hover:bg-primary/90 text-sm cursor-pointer shrink-0"
         }, "＋ Add Monitor")
       ),
+message && React.createElement("div", { className: "text-xs font-mono text-amber-500 mt-1" }, message)
+        )
+      ),
 
-      message && React.createElement("div", { className: "text-xs font-mono text-amber-500 mt-1" }, message)
-    )
-  ),
-
-  // Live Uptime Statuses Grid Card
-  React.createElement(Card, null,
-    React.createElement(CardHeader, null,
-      React.createElement(CardTitle, { className: "text-base font-semibold" }, "📺 Live Monitor Statuses")
-    ),
-    React.createElement(CardContent, null,
-      monitorList.length === 0 ? 
-        React.createElement("div", { className: "text-sm text-muted-foreground text-center py-6 border border-dashed border-border" },
-          "No websites are currently being monitored. Add one above to get started!"
-        ) :
-        React.createElement("div", { className: "flex flex-col gap-6" },
-          groupNames.map(function (groupName) {
-const groupMonitors = groups[groupName] || [];
+      // Live Uptime Statuses Grid Card
+      React.createElement(Card, null,
+        React.createElement(CardHeader, null,
+          React.createElement(CardTitle, { className: "text-base font-semibold" }, "📺 Live Monitor Statuses")
+        ),
+        React.createElement(CardContent, null,
+          monitorList.length === 0 ? 
+            React.createElement("div", { className: "text-sm text-muted-foreground text-center py-6 border border-dashed border-border" },
+              "No websites are currently being monitored. Add one above to get started!"
+            ) :
+            React.createElement("div", { className: "flex flex-col gap-6" },
+              groupNames.map(function (groupName) {
+                const groupMonitors = groups[groupName] || [];
                 return React.createElement("div", { key: groupName, className: "flex flex-col gap-3" },
-                  // 🟢 Category Header
+                  // Category Header
                   React.createElement("div", { className: "text-xs font-bold tracking-wider uppercase text-muted-foreground border-b border-border pb-1" }, 
                     groupName
                   ),
@@ -191,7 +208,7 @@ const groupMonitors = groups[groupName] || [];
 
                       return React.createElement("div", { key: url, className: "flex items-center justify-between py-3" },
                         React.createElement("div", { className: "flex flex-col gap-1 pr-4 truncate" },
-                          React.createElement("span", { className: "text-sm font-semibold truncate" }, url),
+                          React.createElement("span", { className: "text-sm font-semibold truncate text-foreground" }, url),
                           React.createElement("span", { className: "text-xs text-muted-foreground" }, "Polling status every 60 seconds")
                         ),
                         React.createElement("div", { className: "flex items-center gap-4 shrink-0" },
@@ -214,5 +231,6 @@ const groupMonitors = groups[groupName] || [];
   }
 
   // Register the tab in the dashboard shell
-  window.__HERMES_PLUGINS__.register("uptime", WebsiteMonitorPage);
+  const registrationTarget = window.__HERMES_PLUGINS__ || { register: function() {} };
+  registrationTarget.register("uptime", WebsiteMonitorPage);
 })();
