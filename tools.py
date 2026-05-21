@@ -14,6 +14,7 @@ ADD_MONITOR_SCHEMA = {
     "parameters": {
         "type": "OBJECT",
         "properties": {
+            "app": {"type": "STRING", "description": "This is the name of the app this monitor is associated with."},
             "url": {"type": "STRING", "description": "The absolute URL to monitor (e.g. https://google.com)"}
         },
         "required": ["url"]
@@ -45,6 +46,7 @@ LIST_MONITORS_SCHEMA = {
 # --- HANDLERS ---
 
 def _handle_add_monitor(args: dict, **kw) -> str:
+    app = args.get("app", "default").strip()
     url = args.get("url", "").strip()
     if not url.startswith(("http://", "https://")):
         return json.dumps({"success": False, "error": "URL must begin with http:// or https://"})
@@ -54,7 +56,7 @@ def _handle_add_monitor(args: dict, **kw) -> str:
         return json.dumps({"success": True, "message": f"{url} is already being monitored."})
         
     # Seed with UNKNOWN so the loop checks it and transitions state
-    monitors[url] = {"last_status": "UNKNOWN"}
+    monitors[url] = {"last_status": "UNKNOWN", "app": app}
     _save_monitors(monitors)
     return json.dumps({"success": True, "message": f"Successfully added {url} to the website monitor."})
 
