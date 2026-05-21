@@ -1,11 +1,11 @@
 {
-  "name": "sentinel",
-  "label": "Sentinel",
+  "name": "uptime",
+  "label": "Uptime",
   "description": "Monitor background website pings and view live statuses.",
   "icon": "Activity",
   "version": "1.0.0",
   "tab": {
-    "path": "/sentinel",
+    "path": "/uptime",
     "position": "after:skills"
   },
   "slots": [],
