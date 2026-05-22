@@ -1,216 +1,339 @@
-"""Tools for Website Monitor Plugin."""
+"""Website Monitor Plugin for Hermes Agent."""
 
 from __future__ import annotations
 
+import builtins
+import hashlib
 import json
-import re
-from . import _load_monitors, _save_monitors, _check_website
+import logging
+import subprocess
+import tempfile
+import threading
+import time
+import urllib.request
+from pathlib import Path
+from typing import Any, Dict
+
+from hermes_constants import get_hermes_home
+
+logger = logging.getLogger(__name__)
+
+if not hasattr(builtins, "_hermes_uptime_thread_started"):
+    builtins._hermes_uptime_thread_started = False
+
+if not hasattr(builtins, "_hermes_uptime_thread_lock"):
+    builtins._hermes_uptime_thread_lock = threading.Lock()
+
+if not hasattr(builtins, "_hermes_uptime_check_lock"):
+    builtins._hermes_uptime_check_lock = threading.Lock()
 
 
-# --- SCHEMAS ---
+def _get_config_path() -> Path:
+    return get_hermes_home() / "website_monitors.json"
 
 
+def _load_monitors() -> Dict[str, Dict[str, Any]]:
+    path = _get_config_path()
+
+    if not path.exists():
+        return {}
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.error(f"Failed to read website monitors config: {e}")
+        return {}
 
 
+def _save_monitors(monitors: Dict[str, Dict[str, Any]]) -> None:
+    path = _get_config_path()
+
+    try:
+        path.write_text(json.dumps(monitors, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.error(f"Failed to write website monitors config: {e}")
 
 
+def _stable_port_for_name(name: str, base: int = 12334, spread: int = 1000) -> int:
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
+    return base + (int(digest[:8], 16) % spread)
 
-# Add Website Monitor Schema
-ADD_WEBSITE_MONITOR_SCHEMA = {
-    "name": "add_website_monitor",
-    "description": "Add a website to be monitored.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "name": {
-                "type": "STRING",
-                "description": "This is the name of the monitor."
-            },
-            "configuration": {
-                "type": "STRING",
-                "description": "The URL of the website to monitor."
-            },
-            "application": {
-                "type": "STRING",
-                "description": "This is the name of the application this monitor is associated with."
+
+def _check_website(url: str) -> bool:
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Hermes-Website-Monitor/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            return 200 <= response.status < 300
+    except Exception:
+        return False
+
+
+def _build_proxy_runtime_config(config: Dict[str, Any], socks_port: int) -> Dict[str, Any]:
+    outbounds = config.get("outbounds", [])
+    if not outbounds:
+        raise ValueError("Proxy config has no outbounds")
+
+    final_tag = outbounds[0].get("tag")
+    if not final_tag:
+        raise ValueError("First proxy outbound has no tag")
+
+    return {
+        "log": {"level": "info"},
+        "inbounds": [
+            {
+                "type": "socks",
+                "tag": "socks-in",
+                "listen": "127.0.0.1",
+                "listen_port": socks_port,
             }
-        },
-        "required": [ "name", "configuration" ]
+        ],
+        "outbounds": outbounds,
+        "route": {"final": final_tag},
     }
-}
 
 
-# Add Proxy Monitor Schema
-ADD_PROXY_MONITOR_SCHEMA = {
-    "name": "add_proxy_monitor",
-    "description": "Add a proxy to be monitored.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "name": {
-                "type": "STRING",
-                "description": "This is the name of the monitor."
+def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
+    test_url = config.get("test_url", "https://api.ipify.org")
+    socks_port = int(config.get("socks_port", _stable_port_for_name(name)))
+
+    temp_path = None
+    proc = None
+
+    try:
+        runtime_config = _build_proxy_runtime_config(config, socks_port)
+
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            delete=False,
+            encoding="utf-8",
+        ) as f:
+            json.dump(runtime_config, f)
+            temp_path = f.name
+
+        proc = subprocess.Popen(
+            ["hiddify-core", "run", "-c", temp_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        for _ in range(30):
+            result = subprocess.run(
+                ["bash", "-lc", f"ss -ltn | grep -q ':{socks_port} '"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if result.returncode == 0:
+                break
+            time.sleep(1)
+        else:
+            logger.error(f"Proxy monitor {name}: SOCKS port {socks_port} never opened")
+            return False
+
+        time.sleep(2)
+
+        result = subprocess.run(
+            [
+                "curl",
+                "--silent",
+                "--show-error",
+                "--fail",
+                "--location",
+                "--retry",
+                "2",
+                "--retry-delay",
+                "1",
+                "--connect-timeout",
+                "10",
+                "--max-time",
+                "25",
+                "--proxy",
+                f"socks5h://127.0.0.1:{socks_port}",
+                test_url,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            logger.error(f"Proxy monitor {name}: curl failed: {result.stderr.strip()}")
+            return False
+
+        logger.info(
+            f"Proxy monitor {name}: test succeeded via port {socks_port}: "
+            f"{result.stdout.strip()[:120]}"
+        )
+        return True
+
+    except Exception:
+        logger.exception(f"Proxy monitor failed for {name}")
+        return False
+
+    finally:
+        if proc:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        if temp_path:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def _send_alert(ctx, target_room: str, message: str) -> None:
+    try:
+        result = ctx.dispatch_tool(
+            "send_message",
+            {
+                "target": target_room,
+                "message": message,
             },
-            "configuration": {
-                "type": "OBJECT",
-                "description": "This is the configuration object for the monitor."
-            },
-            "application": {
-                "type": "STRING",
-                "description": "This is the name of the application this monitor is associated with."
-            }
-        },
-        "required": [ "name", "configuration" ]
-    }
-}
+        )
+        logger.info(f"Website monitor alert dispatched: {result}")
+    except Exception:
+        logger.exception("Failed to dispatch website monitor alert")
 
 
-# List Monitors Schema
-LIST_MONITORS_SCHEMA = {
-    "name": "list_monitors",
-    "description": "List all monitored websites and proxies.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {}
-    }
-}
+def _background_monitor_loop(ctx) -> None:
+    time.sleep(15)
+
+    logger.warning(f"RUNNING UPTIME LOOP FROM FILE: {__file__}")
+    logger.info("Website Monitor background thread started successfully.")
+
+    target_room = "matrix:!RCoAgzyLWmmeLSIfPF:hmx.sh"
+
+    while True:
+        with builtins._hermes_uptime_check_lock:
+            try:
+                monitors = _load_monitors()
+                changed = False
+
+                for monitor_id, info in list(monitors.items()):
+                    if not isinstance(info, dict):
+                        logger.warning(f"Skipping malformed monitor: {monitor_id}")
+                        continue
+
+                    if monitor_id.startswith("proxy:"):
+                        monitor_type = "proxy"
+                    else:
+                        monitor_type = info.get("type", "website")
+
+                    if monitor_type == "proxy":
+                        name = info.get("name", monitor_id.replace("proxy:", ""))
+                        config = info.get("config", {})
+
+                        is_up = _check_proxy(name, config)
+                        display_name = name
+                        alert_title = "PROXY MONITOR ALERT"
+
+                    elif monitor_type == "website":
+                        if not monitor_id.startswith(("http://", "https://")):
+                            logger.warning(f"Skipping invalid website monitor key: {monitor_id}")
+                            continue
+
+                        is_up = _check_website(monitor_id)
+                        display_name = monitor_id
+                        alert_title = "WEBSITE UPTIME MONITOR ALERT"
+
+                    else:
+                        logger.warning(f"Skipping unknown monitor type for {monitor_id}: {monitor_type}")
+                        continue
+
+                    current_status = "UP" if is_up else "DOWN"
+                    old_status = info.get("last_status", "UNKNOWN")
+
+                    if current_status != old_status:
+                        monitors[monitor_id]["last_status"] = current_status
+                        changed = True
+
+                        logger.info(
+                            f"Monitor status changed for {display_name}: "
+                            f"{old_status} -> {current_status}"
+                        )
+
+                        if old_status != "UNKNOWN":
+                            alert_icon = "🟢" if is_up else "🔴"
+                            alert_msg = (
+                                f"{alert_icon} **{alert_title}**\n\n"
+                                f"**{display_name}** went from "
+                                f"**{old_status}** ➡️ **{current_status}**!"
+                            )
+                            _send_alert(ctx, target_room, alert_msg)
+
+                if changed:
+                    _save_monitors(monitors)
+
+            except Exception:
+                logger.exception("Error in Website Monitor loop")
+
+        time.sleep(60)
 
 
-# Remove Monitor Schema
-REMOVE_MONITOR_SCHEMA = {
-    "name": "remove_monitor",
-    "description": "Remove a service from being monitored.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "name": {
-                "type": "STRING",
-                "description": "The name of the monitor to remove."
-            },
-            "application": {
-                "type": "STRING",
-                "description": "The application associated with the monitor to remove."
-            }
-        },
-        "required": [ "name", "application" ]
-    }
-}
-
-
-# Handle Add Website Monitor
-def _handle_add_website_monitor ( args: dict, **kw ) -> str :
-    # Input Data
-    name = args.get("name", "").strip()
-    configuration = args.get("configuration", "").strip()
-    application = args.get("application", "Unassigned").strip()
-    # Input Data Validation
-    if not re.fullmatch(r"^[a-zA-Z0-9 ]+$", name):
-        return json.dumps({
-            "success": False,
-            "error": "Monitor name must be an alphanumeric string that can include spaces."
-        })
-    if not re.fullmatch(r"^[a-zA-Z0-9 ]+$", application):
-        return json.dumps({
-            "success": False,
-            "error": "Monitor application must be an alphanumeric string that can include spaces."
-        })
-    # Load Monitors
-    monitors = _load_monitors()
-    # Check For Duplicates
-    if f"{ application}:{ name }" in monitors:
-        return json.dumps({
-            "success": True,
-            "message": f"{ configuration } is already being monitored under { application }."
-        })
-    # Add Monitor
-    monitors[f"{ application }:{ name }"] = {
-        "type": "website",
-        "configuration": configuration,
-        "last_status": "Unknown"
-    }
-    _save_monitors(monitors)
-    return json.dumps({
-        "success": True,
-        "message": f"Successfully added the monitor for { configuration }."}
+def register(ctx) -> None:
+    """Registers tools and starts the background monitoring thread."""
+    from .tools import (
+        ADD_WEBSITE_MONITOR_SCHEMA,
+        ADD_PROXY_MONITOR_SCHEMA,
+        REMOVE_MONITOR_SCHEMA,
+        LIST_MONITORS_SCHEMA,
+        _handle_add_website_monitor,
+        _handle_add_proxy_monitor,
+        _handle_remove_monitor,
+        _handle_list_monitors,
     )
 
+    ctx.register_tool(
+        name="add_website_monitor",
+        toolset="uptime",
+        schema=ADD_WEBSITE_MONITOR_SCHEMA,
+        handler=_handle_add_website_monitor,
+        emoji="➕",
+    )
 
-# Handle Add Proxy Monitor
-def _handle_add_proxy_monitor ( args: dict, **kw ) -> str :
-    # Input Data
-    name = args.get("name", "").strip()
-    configuration = args.get("configuration", "").strip()
-    application = args.get("application", "Unassigned").strip()
-    # Input Data Validation
-    if not re.fullmatch(r"^[a-zA-Z0-9 ]+$", name):
-        return json.dumps({
-            "success": False,
-            "error": "Monitor name must be an alphanumeric string that can include spaces."
-        })
-    if not re.fullmatch(r"^[a-zA-Z0-9 ]+$", application):
-        return json.dumps({
-            "success": False,
-            "error": "Monitor application must be an alphanumeric string that can include spaces."
-        })
-    # Load Monitors
-    monitors = _load_monitors()
-    # Check For Duplicates
-    if f"{ application }:{ name }" in monitors:
-        return json.dumps({
-            "success": True,
-            "message": f"{ name } is already being monitored under { application }."
-        })
-    # Add Monitor
-    monitors[f"{ application }: { name }"] = {
-        "type": "proxy",
-        "configuration": configuration,
-        "last_status": "Unknown"
-    }
-    _save_monitors(monitors)
-    return json.dumps({
-        "success": True,
-        "message": f"Successfully added the proxy monitor for the { name }."
-    })
+    ctx.register_tool(
+        name="add_proxy_monitor",
+        toolset="uptime",
+        schema=ADD_PROXY_MONITOR_SCHEMA,
+        handler=_handle_add_proxy_monitor,
+        emoji="🧦",
+    )
 
+    ctx.register_tool(
+        name="remove_monitor",
+        toolset="uptime",
+        schema=REMOVE_MONITOR_SCHEMA,
+        handler=_handle_remove_monitor,
+        emoji="❌",
+    )
 
-# Handle List Monitors
-def _handle_list_monitors ( args: dict, **kw ) -> str :
-    # Load Monitors
-    monitors = _load_monitors()
-    # Return Monitors
-    return json.dumps({
-        "success": True,
-        "monitors": monitors
-    })
+    ctx.register_tool(
+        name="list_monitors",
+        toolset="uptime",
+        schema=LIST_MONITORS_SCHEMA,
+        handler=_handle_list_monitors,
+        emoji="📋",
+    )
 
+    with builtins._hermes_uptime_thread_lock:
+        if builtins._hermes_uptime_thread_started:
+            logger.info("Website Monitor background thread already running globally; skipping duplicate start.")
+            return
 
-# Handle Remove Monitor
-def _handle_remove_monitor ( args: dict, **kw ) -> str :
-    # Input Data
-    name = args.get("name", "").strip()
-    application = args.get("application", "").strip()
-    # Input Data Validation
-    if not re.fullmatch(r"^[a-zA-Z0-9 ]+$", name):
-        return json.dumps({
-            "success": False,
-            "error": "Monitor name must be an alphanumeric string that can include spaces."
-        })
-    if not re.fullmatch(r"^[a-zA-Z0-9 ]+$", application):
-        return json.dumps({
-            "success": False,
-            "error": "Monitor application must be an alphanumeric string that can include spaces."
-        })
-    # Load Monitors
-    monitors = _load_monitors()
-    # Find Monitor
-    if f"{ application }:{ name }" not in monitors:
-        return json.dumps({
-            "success": True,
-            "error": f"{ name } is not in the monitored under { application }."
-        })
-    # Remove Monitor
-    del monitors[f"{ application }:{ name }"]
-    _save_monitors(monitors)
-    return json.dumps({
-        "success": True,
-        "message": f"Successfully removed { name } from being monitored."})
+        monitor_thread = threading.Thread(
+            target=_background_monitor_loop,
+            args=(ctx,),
+            daemon=True,
+        )
+
+        monitor_thread.start()
+        builtins._hermes_uptime_thread_started = True
+
+    logger.info("Website Monitor background thread registered successfully.")
