@@ -16,6 +16,9 @@ from hermes_constants import get_hermes_home
 
 logger = logging.getLogger(__name__)
 
+_monitor_thread_started = False
+_monitor_thread_lock = threading.Lock()
+
 
 def _get_config_path() -> Path:
     return get_hermes_home() / "website_monitors.json"
@@ -247,6 +250,8 @@ def _background_monitor_loop(ctx) -> None:
 
 def register(ctx) -> None:
     """Registers tools and starts the background monitoring thread."""
+    global _monitor_thread_started
+
     from .tools import (
         ADD_MONITOR_SCHEMA,
         ADD_MONITOR_PROXY_SCHEMA,
@@ -290,12 +295,18 @@ def register(ctx) -> None:
         emoji="📋",
     )
 
-    monitor_thread = threading.Thread(
-        target=_background_monitor_loop,
-        args=(ctx,),
-        daemon=True,
-    )
+    with _monitor_thread_lock:
+        if _monitor_thread_started:
+            logger.info("Website Monitor background thread already running; skipping duplicate start.")
+            return
 
-    monitor_thread.start()
+        monitor_thread = threading.Thread(
+            target=_background_monitor_loop,
+            args=(ctx,),
+            daemon=True,
+        )
+
+        monitor_thread.start()
+        _monitor_thread_started = True
 
     logger.info("Website Monitor background thread registered successfully.")
