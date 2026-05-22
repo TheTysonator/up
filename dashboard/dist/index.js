@@ -1,13 +1,28 @@
+( function () {
 
-(function () {
-  "use strict";
+    "use strict";
 
-  const SDK = window.__HERMES_PLUGIN_SDK__;
-  const { React } = SDK;
-  const { Card, CardHeader, CardTitle, CardContent, Badge, Button } = SDK.components;
-  const { useState, useEffect } = SDK.hooks;
+    // Software Development Kit
+    const SDK = window.__HERMES_PLUGIN_SDK__;
+    const { React } = SDK;
+
+    const { Card, CardHeader, CardTitle, CardContent, Badge, Button } = SDK.components;
+
+    const { useState, useEffect } = SDK.hooks;
+
+    // Plugin Page
+
+
+
+
+  // type, configuration, create/view/delete, overall, view history
+  
+  
+  
 
   function WebsiteMonitorPage() {
+
+
     const [monitors, setMonitors] = useState({});
     const [newUrl, setNewUrl] = useState("");
     const [loading, setLoading] = useState(false);
