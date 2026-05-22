@@ -4,7 +4,7 @@ description: "Monitors website uptime in the background and sends chat alerts. I
 author: "Tylan"
 kind: backend
 provides_tools:
-  - add_monitor_proxy
-  - add_monitor
+  - add_proxy_monitor
+  - add_website_monitor
   - remove_monitor
   - list_monitors

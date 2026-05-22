@@ -9,33 +9,66 @@ from . import _load_monitors, _save_monitors, _check_website
 # --- SCHEMAS ---
 
 
-ADD_MONITOR_PROXY_SCHEMA = {
-    "name": "add_monitor_proxy",
-    "description": "Add a PROXY to the background monitoring queue.",
+
+
+
+
+
+# Add Website Monitor Schema
+ADD_WEBSITE_MONITOR_SCHEMA = {
+    "name": "add_website_monitor",
+    "description": "Add a website to be monitored.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "name": {"type": "STRING", "description": "This is the name of the monitor."},
-            "config": {"type": "OBJECT", "description": "This is the configuration object for the monitor."},
-            "app": {"type": "STRING", "description": "This is the name of the app this monitor is associated with."}
+            "name": {
+                "type": "STRING",
+                "description": "This is the name of the monitor."
+            },
+            "configuration": {
+                "type": "STRING",
+                "description": "The URL of the website to monitor."
+            },
+            "application": {
+                "type": "STRING",
+                "description": "This is the name of the application this monitor is associated with."
+            }
         },
-        "required": ["name", "config"]
+        "required": [ "name", "configuration" ]
     }
 }
 
 
-ADD_MONITOR_SCHEMA = {
-    "name": "add_monitor",
-    "description": "Add a website URL to the background monitoring queue.",
+# Add Proxy Monitor Schema
+ADD_PROXY_MONITOR_SCHEMA = {
+    "name": "add_proxy_monitor",
+    "description": "Add a proxy to be monitored.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "app": {"type": "STRING", "description": "This is the name of the app this monitor is associated with."},
-            "url": {"type": "STRING", "description": "The absolute URL to monitor (e.g. https://google.com)"}
+            "name": {
+                "type": "STRING",
+                "description": "This is the name of the monitor."
+            },
+            "configuration": {
+                "type": "OBJECT",
+                "description": "This is the configuration object for the monitor."
+            },
+            "application": {
+                "type": "STRING",
+                "description": "This is the name of the application this monitor is associated with."
+            }
         },
-        "required": ["url"]
+        "required": [ "name", "configuration" ]
     }
 }
+
+
+
+
+
+
+
 
 REMOVE_MONITOR_SCHEMA = {
     "name": "remove_monitor",
@@ -61,7 +94,7 @@ LIST_MONITORS_SCHEMA = {
 
 # --- HANDLERS ---
 
-def _handle_add_monitor(args: dict, **kw) -> str:
+def _handle_add_website_monitor(args: dict, **kw) -> str:
     app = args.get("app", "default").strip()
     url = args.get("url", "").strip()
     if not url.startswith(("http://", "https://")):
@@ -77,10 +110,10 @@ def _handle_add_monitor(args: dict, **kw) -> str:
     return json.dumps({"success": True, "message": f"Successfully added {url} to the website monitor."})
 
 
-def _handle_add_monitor_proxy(args: dict, **kw) -> str:
+def _handle_add_proxy_monitor(args: dict, **kw) -> str:
     app = args.get("app", "default").strip()
     name = args.get("name", "").strip()
-    config = args.get("config")
+    config = args.get("configuration")
 
     if not name:
         return json.dumps({"success": False, "error": "Proxy monitor name is required."})

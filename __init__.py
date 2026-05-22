@@ -273,29 +273,29 @@ def register(ctx) -> None:
     global _monitor_thread_started
 
     from .tools import (
-        ADD_MONITOR_SCHEMA,
-        ADD_MONITOR_PROXY_SCHEMA,
+        ADD_WEBSITE_MONITOR_SCHEMA,
+        ADD_PROXY_MONITOR_SCHEMA,
         REMOVE_MONITOR_SCHEMA,
         LIST_MONITORS_SCHEMA,
-        _handle_add_monitor,
-        _handle_add_monitor_proxy,
+        _handle_add_website_monitor,
+        _handle_add_proxy_monitor,
         _handle_remove_monitor,
         _handle_list_monitors,
     )
 
     ctx.register_tool(
-        name="add_monitor",
+        name="add_website_monitor",
         toolset="uptime",
-        schema=ADD_MONITOR_SCHEMA,
-        handler=_handle_add_monitor,
+        schema=ADD_WEBSITE_MONITOR_SCHEMA,
+        handler=_handle_add_website_monitor,
         emoji="➕",
     )
 
     ctx.register_tool(
-        name="add_monitor_proxy",
+        name="add_proxy_monitor",
         toolset="uptime",
-        schema=ADD_MONITOR_PROXY_SCHEMA,
-        handler=_handle_add_monitor_proxy,
+        schema=ADD_PROXY_MONITOR_SCHEMA,
+        handler=_handle_add_proxy_monitor,
         emoji="🧦",
     )
 

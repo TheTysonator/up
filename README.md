@@ -1,3 +1,7 @@
+
+polaris, uptime
+
+
 # Hermes Agent Website Monitor Plugin 🌐⏱️
 
 An open-source plugin for the [Hermes Agent](https://github.com/NousResearch/hermes-agent) framework. It runs a silent, asynchronous background thread that pings your websites every 60 seconds and instantly sends Matrix, Telegram, or Discord alerts the moment a site goes down or recovers.
