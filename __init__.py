@@ -10,7 +10,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from hermes_constants import get_hermes_home
 
@@ -60,33 +60,37 @@ def _check_website(url: str) -> bool:
         return False
 
 
-def _find_socks_port(config: Any) -> Optional[int]:
-    """
-    Recursively finds a SOCKS inbound listen_port in a sing-box/Hiddify config.
-    """
-    if isinstance(config, dict):
-        if config.get("type") == "socks" and "listen_port" in config:
-            return int(config["listen_port"])
+def _build_proxy_runtime_config(config: Dict[str, Any], socks_port: int) -> Dict[str, Any]:
+    outbounds = config.get("outbounds", [])
 
-        for value in config.values():
-            found = _find_socks_port(value)
-            if found:
-                return found
+    if not outbounds:
+        raise ValueError("Proxy config has no outbounds")
 
-    elif isinstance(config, list):
-        for item in config:
-            found = _find_socks_port(item)
-            if found:
-                return found
+    final_tag = outbounds[0].get("tag")
 
-    return None
+    if not final_tag:
+        raise ValueError("First proxy outbound has no tag")
+
+    return {
+        "log": {
+            "level": "info",
+        },
+        "inbounds": [
+            {
+                "type": "socks",
+                "tag": "socks-in",
+                "listen": "127.0.0.1",
+                "listen_port": socks_port,
+            }
+        ],
+        "outbounds": outbounds,
+        "route": {
+            "final": final_tag,
+        },
+    }
 
 
 def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
-    """
-    Starts hiddify-core, waits for local SOCKS proxy, tests through it,
-    then shuts it down.
-    """
     test_url = config.get("test_url", "https://ifconfig.me")
     socks_port = int(config.get("socks_port", 12334))
 
@@ -94,13 +98,15 @@ def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
     proc = None
 
     try:
+        runtime_config = _build_proxy_runtime_config(config, socks_port)
+
         with tempfile.NamedTemporaryFile(
             mode="w",
             suffix=".json",
             delete=False,
             encoding="utf-8",
         ) as f:
-            json.dump(config, f)
+            json.dump(runtime_config, f)
             temp_path = f.name
 
         proc = subprocess.Popen(
@@ -110,8 +116,7 @@ def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
             text=True,
         )
 
-        # Wait for SOCKS port to open
-        for _ in range(20):
+        for _ in range(25):
             result = subprocess.run(
                 ["bash", "-lc", f"ss -ltn | grep -q ':{socks_port} '"],
                 stdout=subprocess.DEVNULL,
@@ -126,7 +131,6 @@ def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
             logger.error(f"Proxy monitor {name}: SOCKS port {socks_port} never opened")
             return False
 
-        # Test through SOCKS5h
         result = subprocess.run(
             [
                 "curl",
@@ -145,9 +149,7 @@ def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
         )
 
         if result.returncode != 0:
-            logger.error(
-                f"Proxy monitor {name}: curl failed: {result.stderr.strip()}"
-            )
+            logger.error(f"Proxy monitor {name}: curl failed: {result.stderr.strip()}")
             return False
 
         logger.info(f"Proxy monitor {name}: test succeeded: {result.stdout.strip()[:120]}")
@@ -191,6 +193,7 @@ def _send_alert(ctx, target_room: str, message: str) -> None:
 def _background_monitor_loop(ctx) -> None:
     time.sleep(15)
 
+    logger.warning(f"RUNNING UPTIME LOOP FROM FILE: {__file__}")
     logger.info("Website Monitor background thread started successfully.")
 
     target_room = "matrix:!RCoAgzyLWmmeLSIfPF:hmx.sh"
@@ -201,10 +204,14 @@ def _background_monitor_loop(ctx) -> None:
             changed = False
 
             for monitor_id, info in list(monitors.items()):
-                monitor_type = info.get("type")
+                if not isinstance(info, dict):
+                    logger.warning(f"Skipping malformed monitor: {monitor_id}")
+                    continue
 
-                if not monitor_type:
-                    monitor_type = "proxy" if monitor_id.startswith("proxy:") else "website"
+                if monitor_id.startswith("proxy:"):
+                    monitor_type = "proxy"
+                else:
+                    monitor_type = info.get("type", "website")
 
                 if monitor_type == "proxy":
                     name = info.get("name", monitor_id.replace("proxy:", ""))
@@ -214,10 +221,20 @@ def _background_monitor_loop(ctx) -> None:
                     display_name = name
                     alert_title = "PROXY MONITOR ALERT"
 
-                else:
+                elif monitor_type == "website":
+                    if not monitor_id.startswith(("http://", "https://")):
+                        logger.warning(f"Skipping invalid website monitor key: {monitor_id}")
+                        continue
+
                     is_up = _check_website(monitor_id)
                     display_name = monitor_id
                     alert_title = "WEBSITE UPTIME MONITOR ALERT"
+
+                else:
+                    logger.warning(
+                        f"Skipping unknown monitor type for {monitor_id}: {monitor_type}"
+                    )
+                    continue
 
                 current_status = "UP" if is_up else "DOWN"
                 old_status = info.get("last_status", "UNKNOWN")
