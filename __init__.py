@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import builtins
-import hashlib
+import fcntl
 import json
 import logging
 import subprocess
@@ -24,12 +24,13 @@ if not hasattr(builtins, "_hermes_uptime_thread_started"):
 if not hasattr(builtins, "_hermes_uptime_thread_lock"):
     builtins._hermes_uptime_thread_lock = threading.Lock()
 
-if not hasattr(builtins, "_hermes_uptime_check_lock"):
-    builtins._hermes_uptime_check_lock = threading.Lock()
-
 
 def _get_config_path() -> Path:
     return get_hermes_home() / "website_monitors.json"
+
+
+def _get_lock_path() -> Path:
+    return get_hermes_home() / "uptime_monitor.lock"
 
 
 def _load_monitors() -> Dict[str, Dict[str, Any]]:
@@ -54,29 +55,28 @@ def _save_monitors(monitors: Dict[str, Dict[str, Any]]) -> None:
         logger.error(f"Failed to write website monitors config: {e}")
 
 
-def _stable_port_for_name(name: str, base: int = 12334, spread: int = 1000) -> int:
-    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
-    return base + (int(digest[:8], 16) % spread)
-
-
 def _check_website(url: str) -> bool:
     try:
         req = urllib.request.Request(
             url,
             headers={"User-Agent": "Hermes-Website-Monitor/1.0"},
         )
+
         with urllib.request.urlopen(req, timeout=5) as response:
             return 200 <= response.status < 300
+
     except Exception:
         return False
 
 
 def _build_proxy_runtime_config(config: Dict[str, Any], socks_port: int) -> Dict[str, Any]:
     outbounds = config.get("outbounds", [])
+
     if not outbounds:
         raise ValueError("Proxy config has no outbounds")
 
     final_tag = outbounds[0].get("tag")
+
     if not final_tag:
         raise ValueError("First proxy outbound has no tag")
 
@@ -116,9 +116,8 @@ def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
 
         proc = subprocess.Popen(
             ["hiddify-core", "run", "-c", temp_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
         for _ in range(30):
@@ -127,8 +126,10 @@ def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+
             if result.returncode == 0:
                 break
+
             time.sleep(1)
         else:
             logger.error(f"Proxy monitor {name}: SOCKS port {socks_port} never opened")
@@ -198,12 +199,23 @@ def _send_alert(ctx, target_room: str, message: str) -> None:
                 "message": message,
             },
         )
+
         logger.info(f"Website monitor alert dispatched: {result}")
+
     except Exception:
         logger.exception("Failed to dispatch website monitor alert")
 
 
 def _background_monitor_loop(ctx) -> None:
+    lock_path = _get_lock_path()
+    lock_file = lock_path.open("w")
+
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logger.warning("Another uptime monitor loop is already running. Exiting duplicate thread.")
+        return
+
     time.sleep(15)
 
     logger.warning(f"RUNNING UPTIME LOOP FROM FILE: {__file__}")
@@ -212,68 +224,69 @@ def _background_monitor_loop(ctx) -> None:
     target_room = "matrix:!RCoAgzyLWmmeLSIfPF:hmx.sh"
 
     while True:
-        with builtins._hermes_uptime_check_lock:
-            try:
-                monitors = _load_monitors()
-                changed = False
+        try:
+            monitors = _load_monitors()
+            changed = False
 
-                for monitor_id, info in list(monitors.items()):
-                    if not isinstance(info, dict):
-                        logger.warning(f"Skipping malformed monitor: {monitor_id}")
+            for monitor_id, info in list(monitors.items()):
+                if not isinstance(info, dict):
+                    logger.warning(f"Skipping malformed monitor: {monitor_id}")
+                    continue
+
+                if monitor_id.startswith("proxy:"):
+                    monitor_type = "proxy"
+                else:
+                    monitor_type = info.get("type", "website")
+
+                if monitor_type == "proxy":
+                    name = info.get("name", monitor_id.replace("proxy:", ""))
+                    config = info.get("config", {})
+
+                    is_up = _check_proxy(name, config)
+                    display_name = name
+                    alert_title = "PROXY MONITOR ALERT"
+
+                elif monitor_type == "website":
+                    if not monitor_id.startswith(("http://", "https://")):
+                        logger.warning(f"Skipping invalid website monitor key: {monitor_id}")
                         continue
 
-                    if monitor_id.startswith("proxy:"):
-                        monitor_type = "proxy"
-                    else:
-                        monitor_type = info.get("type", "website")
+                    is_up = _check_website(monitor_id)
+                    display_name = monitor_id
+                    alert_title = "WEBSITE UPTIME MONITOR ALERT"
 
-                    if monitor_type == "proxy":
-                        name = info.get("name", monitor_id.replace("proxy:", ""))
-                        config = info.get("config", {})
+                else:
+                    logger.warning(f"Skipping unknown monitor type for {monitor_id}: {monitor_type}")
+                    continue
 
-                        is_up = _check_proxy(name, config)
-                        display_name = name
-                        alert_title = "PROXY MONITOR ALERT"
+                current_status = "UP" if is_up else "DOWN"
+                old_status = info.get("last_status", "UNKNOWN")
 
-                    elif monitor_type == "website":
-                        if not monitor_id.startswith(("http://", "https://")):
-                            logger.warning(f"Skipping invalid website monitor key: {monitor_id}")
-                            continue
+                if current_status != old_status:
+                    monitors[monitor_id]["last_status"] = current_status
+                    changed = True
 
-                        is_up = _check_website(monitor_id)
-                        display_name = monitor_id
-                        alert_title = "WEBSITE UPTIME MONITOR ALERT"
+                    logger.info(
+                        f"Monitor status changed for {display_name}: "
+                        f"{old_status} -> {current_status}"
+                    )
 
-                    else:
-                        logger.warning(f"Skipping unknown monitor type for {monitor_id}: {monitor_type}")
-                        continue
+                    if old_status != "UNKNOWN":
+                        alert_icon = "🟢" if is_up else "🔴"
 
-                    current_status = "UP" if is_up else "DOWN"
-                    old_status = info.get("last_status", "UNKNOWN")
-
-                    if current_status != old_status:
-                        monitors[monitor_id]["last_status"] = current_status
-                        changed = True
-
-                        logger.info(
-                            f"Monitor status changed for {display_name}: "
-                            f"{old_status} -> {current_status}"
+                        alert_msg = (
+                            f"{alert_icon} **{alert_title}**\n\n"
+                            f"**{display_name}** went from "
+                            f"**{old_status}** ➡️ **{current_status}**!"
                         )
 
-                        if old_status != "UNKNOWN":
-                            alert_icon = "🟢" if is_up else "🔴"
-                            alert_msg = (
-                                f"{alert_icon} **{alert_title}**\n\n"
-                                f"**{display_name}** went from "
-                                f"**{old_status}** ➡️ **{current_status}**!"
-                            )
-                            _send_alert(ctx, target_room, alert_msg)
+                        _send_alert(ctx, target_room, alert_msg)
 
-                if changed:
-                    _save_monitors(monitors)
+            if changed:
+                _save_monitors(monitors)
 
-            except Exception:
-                logger.exception("Error in Website Monitor loop")
+        except Exception:
+            logger.exception("Error in Website Monitor loop")
 
         time.sleep(60)
 
