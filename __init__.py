@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import logging
@@ -17,9 +18,14 @@ from hermes_constants import get_hermes_home
 
 logger = logging.getLogger(__name__)
 
-_monitor_thread_started = False
-_monitor_thread_lock = threading.Lock()
-_monitor_check_lock = threading.Lock()
+if not hasattr(builtins, "_hermes_uptime_thread_started"):
+    builtins._hermes_uptime_thread_started = False
+
+if not hasattr(builtins, "_hermes_uptime_thread_lock"):
+    builtins._hermes_uptime_thread_lock = threading.Lock()
+
+if not hasattr(builtins, "_hermes_uptime_check_lock"):
+    builtins._hermes_uptime_check_lock = threading.Lock()
 
 
 def _get_config_path() -> Path:
@@ -50,8 +56,7 @@ def _save_monitors(monitors: Dict[str, Dict[str, Any]]) -> None:
 
 def _stable_port_for_name(name: str, base: int = 12334, spread: int = 1000) -> int:
     digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
-    offset = int(digest[:8], 16) % spread
-    return base + offset
+    return base + (int(digest[:8], 16) % spread)
 
 
 def _check_website(url: str) -> bool:
@@ -60,29 +65,23 @@ def _check_website(url: str) -> bool:
             url,
             headers={"User-Agent": "Hermes-Website-Monitor/1.0"},
         )
-
         with urllib.request.urlopen(req, timeout=5) as response:
             return 200 <= response.status < 300
-
     except Exception:
         return False
 
 
 def _build_proxy_runtime_config(config: Dict[str, Any], socks_port: int) -> Dict[str, Any]:
     outbounds = config.get("outbounds", [])
-
     if not outbounds:
         raise ValueError("Proxy config has no outbounds")
 
     final_tag = outbounds[0].get("tag")
-
     if not final_tag:
         raise ValueError("First proxy outbound has no tag")
 
     return {
-        "log": {
-            "level": "info",
-        },
+        "log": {"level": "info"},
         "inbounds": [
             {
                 "type": "socks",
@@ -92,9 +91,7 @@ def _build_proxy_runtime_config(config: Dict[str, Any], socks_port: int) -> Dict
             }
         ],
         "outbounds": outbounds,
-        "route": {
-            "final": final_tag,
-        },
+        "route": {"final": final_tag},
     }
 
 
@@ -121,19 +118,16 @@ def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
             ["hiddify-core", "run", "-c", temp_path],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            text=True,
         )
 
-        for _ in range(25):
+        for _ in range(30):
             result = subprocess.run(
                 ["bash", "-lc", f"ss -ltn | grep -q ':{socks_port} '"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-
             if result.returncode == 0:
                 break
-
             time.sleep(1)
         else:
             logger.error(f"Proxy monitor {name}: SOCKS port {socks_port} never opened")
@@ -203,9 +197,7 @@ def _send_alert(ctx, target_room: str, message: str) -> None:
                 "message": message,
             },
         )
-
         logger.info(f"Website monitor alert dispatched: {result}")
-
     except Exception:
         logger.exception("Failed to dispatch website monitor alert")
 
@@ -219,7 +211,7 @@ def _background_monitor_loop(ctx) -> None:
     target_room = "matrix:!RCoAgzyLWmmeLSIfPF:hmx.sh"
 
     while True:
-        with _monitor_check_lock:
+        with builtins._hermes_uptime_check_lock:
             try:
                 monitors = _load_monitors()
                 changed = False
@@ -252,9 +244,7 @@ def _background_monitor_loop(ctx) -> None:
                         alert_title = "WEBSITE UPTIME MONITOR ALERT"
 
                     else:
-                        logger.warning(
-                            f"Skipping unknown monitor type for {monitor_id}: {monitor_type}"
-                        )
+                        logger.warning(f"Skipping unknown monitor type for {monitor_id}: {monitor_type}")
                         continue
 
                     current_status = "UP" if is_up else "DOWN"
@@ -271,13 +261,11 @@ def _background_monitor_loop(ctx) -> None:
 
                         if old_status != "UNKNOWN":
                             alert_icon = "🟢" if is_up else "🔴"
-
                             alert_msg = (
                                 f"{alert_icon} **{alert_title}**\n\n"
                                 f"**{display_name}** went from "
                                 f"**{old_status}** ➡️ **{current_status}**!"
                             )
-
                             _send_alert(ctx, target_room, alert_msg)
 
                 if changed:
@@ -291,8 +279,6 @@ def _background_monitor_loop(ctx) -> None:
 
 def register(ctx) -> None:
     """Registers tools and starts the background monitoring thread."""
-    global _monitor_thread_started
-
     from .tools import (
         ADD_WEBSITE_MONITOR_SCHEMA,
         ADD_PROXY_MONITOR_SCHEMA,
@@ -336,9 +322,9 @@ def register(ctx) -> None:
         emoji="📋",
     )
 
-    with _monitor_thread_lock:
-        if _monitor_thread_started:
-            logger.info("Website Monitor background thread already running; skipping duplicate start.")
+    with builtins._hermes_uptime_thread_lock:
+        if builtins._hermes_uptime_thread_started:
+            logger.info("Website Monitor background thread already running globally; skipping duplicate start.")
             return
 
         monitor_thread = threading.Thread(
@@ -348,6 +334,6 @@ def register(ctx) -> None:
         )
 
         monitor_thread.start()
-        _monitor_thread_started = True
+        builtins._hermes_uptime_thread_started = True
 
     logger.info("Website Monitor background thread registered successfully.")
