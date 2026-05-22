@@ -97,7 +97,7 @@ def _build_proxy_runtime_config(config: Dict[str, Any], socks_port: int) -> Dict
 
 def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
     test_url = config.get("test_url", "https://api.ipify.org")
-    socks_port = int(config.get("socks_port", _stable_port_for_name(name)))
+    socks_port = int(config.get("socks_port", 12334))
 
     temp_path = None
     proc = None
@@ -116,8 +116,9 @@ def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
 
         proc = subprocess.Popen(
             ["hiddify-core", "run", "-c", temp_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
 
         for _ in range(30):
