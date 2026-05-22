@@ -95,8 +95,8 @@ LIST_MONITORS_SCHEMA = {
 # --- HANDLERS ---
 
 def _handle_add_website_monitor(args: dict, **kw) -> str:
-    app = args.get("app", "default").strip()
-    url = args.get("url", "").strip()
+    app = args.get("application", "default").strip()
+    url = args.get("configuration", "").strip()
     if not url.startswith(("http://", "https://")):
         return json.dumps({"success": False, "error": "URL must begin with http:// or https://"})
         
