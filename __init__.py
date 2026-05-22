@@ -91,7 +91,7 @@ def _build_proxy_runtime_config(config: Dict[str, Any], socks_port: int) -> Dict
 
 
 def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
-    test_url = config.get("test_url", "https://ifconfig.me")
+    test_url = config.get("test_url", "https://api.ipify.org")
     socks_port = int(config.get("socks_port", 12334))
 
     temp_path = None
@@ -137,11 +137,16 @@ def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
                 "--silent",
                 "--show-error",
                 "--fail",
+                "--location",
+                "--retry",
+                "2",
+                "--retry-delay",
+                "1",
                 "--max-time",
-                "15",
+                "20",
                 "--proxy",
                 f"socks5h://127.0.0.1:{socks_port}",
-                test_url,
+                "https://api.ipify.org",
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
