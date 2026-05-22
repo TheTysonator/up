@@ -201,7 +201,10 @@ def _background_monitor_loop(ctx) -> None:
             changed = False
 
             for monitor_id, info in list(monitors.items()):
-                monitor_type = info.get("type", "website")
+                monitor_type = info.get("type")
+
+                if not monitor_type:
+                    monitor_type = "proxy" if monitor_id.startswith("proxy:") else "website"
 
                 if monitor_type == "proxy":
                     name = info.get("name", monitor_id.replace("proxy:", ""))
