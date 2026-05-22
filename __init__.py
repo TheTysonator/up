@@ -130,6 +130,8 @@ def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
         else:
             logger.error(f"Proxy monitor {name}: SOCKS port {socks_port} never opened")
             return False
+        
+        time.sleep(2)
 
         result = subprocess.run(
             [
