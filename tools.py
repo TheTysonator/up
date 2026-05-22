@@ -213,4 +213,5 @@ def _handle_remove_monitor ( args: dict, **kw ) -> str :
     _save_monitors(monitors)
     return json.dumps({
         "success": True,
-        "message": f"Successfully removed { name } from being monitored."})
+        "message": f"Successfully removed { name } from being monitored."
+    })

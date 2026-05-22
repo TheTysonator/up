@@ -2,6 +2,7 @@
 
     "use strict";
 
+
     // Software Development Kit
     const SDK = window.__HERMES_PLUGIN_SDK__;
     const { React } = SDK;
@@ -10,24 +11,55 @@
 
     const { useState, useEffect } = SDK.hooks;
 
+
     // Plugin Page
+    function PluginPage () {
+
+        // Variables
+        const [ loading, setLoading ] = useState(false);
+        const [ message, setMessage ] = useState(null);
+        const [ monitors, setMonitors ] = useState({});
+        const [ newMonitorName, setNewMonitorName ] = useState("");
+        const [ newMonitorApplication, setNewMonitorApplication ] = useState("");
+        const [ newMonitorType, setNewMonitorType ] = useState("website");
+        const [ newMonitorConfiguration, setNewMonitorConfiguration ] = useState("");
+
+        // Add Monitor
+        function addMonitor ( event ) {
+            // Prevent Default
+            event.preventDefault();
+            // Loading
+            setLoading(true);
+            // API Request
 
 
 
 
-  // type, configuration, create/view/delete, overall, view history
+      SDK.fetchJSON("/api/plugins/uptime/add?url=" + encodeURIComponent(newMonitorConfiguration))
+        .then(function (data) {
+          if (data && data.success) {
+            setMessage("Successfully added " + newMonitorConfiguration);
+            setNewMonitorConfiguration("");
+            fetchStatus();
+          } else {
+            setMessage("Error: " + (data ? data.error : "Unknown Error"));
+          }
+        })
+        .catch(function (err) {
+          setMessage("API request failed: " + (err ? err.message : String(err)));
+        })
+        .finally(function () {
+          setLoading(false);
+        });
+    }
+
+
+  // create/view/delete, view history/ping, overall
   
   
   
 
-  function WebsiteMonitorPage() {
-
-
-    const [monitors, setMonitors] = useState({});
-    const [newUrl, setNewUrl] = useState("");
-    const [loading, setLoading] = useState(false);
-    const [message, setMessage] = useState(null);
-
+  
     function fetchStatus() {
       setLoading(true);
 
@@ -49,6 +81,10 @@
         });
     }
 
+
+
+
+
     useEffect(function () {
       fetchStatus();
       const interval = setInterval(fetchStatus, 15000);
@@ -57,29 +93,7 @@
       };
     }, []);
 
-    function handleAdd(e) {
-      e.preventDefault();
-      if (!newUrl.trim()) return;
 
-      setLoading(true);
-
-      SDK.fetchJSON("/api/plugins/uptime/add?url=" + encodeURIComponent(newUrl))
-        .then(function (data) {
-          if (data && data.success) {
-            setMessage("Successfully added " + newUrl);
-            setNewUrl("");
-            fetchStatus();
-          } else {
-            setMessage("Error: " + (data ? data.error : "Unknown Error"));
-          }
-        })
-        .catch(function (err) {
-          setMessage("API request failed: " + (err ? err.message : String(err)));
-        })
-        .finally(function () {
-          setLoading(false);
-        });
-    }
 
     function handleRemove(monitorId) {
       if (!confirm("Are you sure you want to stop monitoring " + monitorId + "?")) return;
@@ -148,13 +162,13 @@
             "Add and manage website and proxy monitors. Background checks occur silently every 60 seconds."
           ),
 
-          React.createElement("form", { onSubmit: handleAdd, className: "flex items-center gap-3 mt-2" },
+          React.createElement("form", { onSubmit: addMonitor, className: "flex items-center gap-3 mt-2" },
             React.createElement("input", {
               type: "text",
               placeholder: "https://mywebsite.com",
-              value: newUrl,
+              value: newMonitorConfiguration,
               onChange: function (e) {
-                setNewUrl(e.target.value);
+                setNewMonitorConfiguration(e.target.value);
               },
               disabled: loading,
               className: "flex-1 border border-border rounded-md px-3 py-2 text-sm bg-background/50 h-9 outline-none focus:ring-1 focus:ring-ring"
@@ -162,7 +176,7 @@
 
             React.createElement(Button, {
               type: "submit",
-              disabled: loading || !newUrl.trim(),
+              disabled: loading || !newMonitorConfiguration.trim(),
               className: "bg-primary text-primary-foreground font-semibold px-4 py-2 hover:bg-primary/90 text-sm cursor-pointer"
             }, "＋ Add Monitor")
           ),
@@ -277,5 +291,5 @@
     );
   }
 
-  window.__HERMES_PLUGINS__.register("uptime", WebsiteMonitorPage);
+  window.__HERMES_PLUGINS__.register("uptime", PluginPage);
 })();
