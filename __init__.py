@@ -81,20 +81,11 @@ def _find_socks_port(config: Any) -> Optional[int]:
 
 def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
     """
-    Starts hiddify-core temporarily, checks a URL through its local SOCKS proxy,
+    Starts hiddify-core, waits for local SOCKS proxy, tests through it,
     then shuts it down.
-
-    Requires:
-        pip install requests[socks]
     """
-    try:
-        import requests
-    except ImportError:
-        logger.error("Proxy monitor requires: pip install requests[socks]")
-        return False
-
     test_url = config.get("test_url", "https://ifconfig.me")
-    socks_port = _find_socks_port(config) or int(config.get("socks_port", 12334))
+    socks_port = int(config.get("socks_port", 12334))
 
     temp_path = None
     proc = None
@@ -111,25 +102,53 @@ def _check_proxy(name: str, config: Dict[str, Any]) -> bool:
 
         proc = subprocess.Popen(
             ["hiddify-core", "run", "-c", temp_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
 
-        time.sleep(5)
+        # Wait for SOCKS port to open
+        for _ in range(20):
+            result = subprocess.run(
+                ["bash", "-lc", f"ss -ltn | grep -q ':{socks_port} '"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
 
-        proxies = {
-            "http": f"socks5h://127.0.0.1:{socks_port}",
-            "https": f"socks5h://127.0.0.1:{socks_port}",
-        }
+            if result.returncode == 0:
+                break
 
-        response = requests.get(
-            test_url,
-            proxies=proxies,
-            timeout=15,
-            headers={"User-Agent": "Hermes-Proxy-Monitor/1.0"},
+            time.sleep(1)
+        else:
+            logger.error(f"Proxy monitor {name}: SOCKS port {socks_port} never opened")
+            return False
+
+        # Test through SOCKS5h
+        result = subprocess.run(
+            [
+                "curl",
+                "--silent",
+                "--show-error",
+                "--fail",
+                "--max-time",
+                "15",
+                "--proxy",
+                f"socks5h://127.0.0.1:{socks_port}",
+                test_url,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
 
-        return 200 <= response.status_code < 300
+        if result.returncode != 0:
+            logger.error(
+                f"Proxy monitor {name}: curl failed: {result.stderr.strip()}"
+            )
+            return False
+
+        logger.info(f"Proxy monitor {name}: test succeeded: {result.stdout.strip()[:120]}")
+        return True
 
     except Exception:
         logger.exception(f"Proxy monitor failed for {name}")
