@@ -69,15 +69,15 @@
         });
     }
 
-    function handleRemove(url) {
-      if (!confirm("Are you sure you want to stop monitoring " + url + "?")) return;
+    function handleRemove(monitorId) {
+      if (!confirm("Are you sure you want to stop monitoring " + monitorId + "?")) return;
 
       setLoading(true);
 
-      SDK.fetchJSON("/api/plugins/uptime/remove?url=" + encodeURIComponent(url))
+      SDK.fetchJSON("/api/plugins/uptime/remove?url=" + encodeURIComponent(monitorId))
         .then(function (data) {
           if (data && data.success) {
-            setMessage("Removed " + url);
+            setMessage("Removed " + monitorId);
             fetchStatus();
           } else {
             setMessage("Error: " + (data ? data.error : "Unknown Error"));
@@ -91,17 +91,27 @@
         });
     }
 
+    function getMonitorName(monitorId, monitorInfo) {
+      if (monitorInfo && monitorInfo.name) return monitorInfo.name;
+      if (monitorInfo && monitorInfo.url) return monitorInfo.url;
+      return monitorId;
+    }
+
+    function getMonitorType(monitorInfo) {
+      return (monitorInfo && monitorInfo.type) ? monitorInfo.type : "website";
+    }
+
     const monitorsSafe = monitors || {};
 
-    const groupedMonitors = Object.keys(monitorsSafe).reduce(function (groups, url) {
-      const monitorInfo = monitorsSafe[url] || {};
+    const groupedMonitors = Object.keys(monitorsSafe).reduce(function (groups, monitorId) {
+      const monitorInfo = monitorsSafe[monitorId] || {};
       const appName = monitorInfo.app || "Unassigned";
 
       if (!groups[appName]) {
         groups[appName] = [];
       }
 
-      groups[appName].push(url);
+      groups[appName].push(monitorId);
       return groups;
     }, {});
 
@@ -123,7 +133,7 @@
 
         React.createElement(CardContent, { className: "flex flex-col gap-4" },
           React.createElement("p", { className: "text-sm text-muted-foreground" },
-            "Add and manage URLs for real-time uptime checks. Background checks occur silently every 60 seconds."
+            "Add and manage website and proxy monitors. Background checks occur silently every 60 seconds."
           ),
 
           React.createElement("form", { onSubmit: handleAdd, className: "flex items-center gap-3 mt-2" },
@@ -160,11 +170,11 @@
           appNames.length === 0 ?
             React.createElement("div", {
               className: "text-sm text-muted-foreground text-center py-6 border border-dashed border-border"
-            }, "No websites are currently being monitored. Add one above to get started!")
+            }, "No monitors are currently active. Add one above to get started!")
             :
             React.createElement("div", { className: "flex flex-col gap-6" },
               appNames.map(function (appName) {
-                const urls = groupedMonitors[appName] || [];
+                const monitorIds = groupedMonitors[appName] || [];
 
                 return React.createElement("div", {
                   key: appName,
@@ -179,30 +189,49 @@
 
                     React.createElement("span", {
                       className: "text-xs text-muted-foreground"
-                    }, urls.length + " monitor" + (urls.length === 1 ? "" : "s"))
+                    }, monitorIds.length + " monitor" + (monitorIds.length === 1 ? "" : "s"))
                   ),
 
                   React.createElement("div", {
                     className: "divide-y divide-border rounded-md border border-border"
                   },
-                    urls.map(function (url) {
-                      const monitorInfo = monitorsSafe[url] || {};
+                    monitorIds.map(function (monitorId) {
+                      const monitorInfo = monitorsSafe[monitorId] || {};
+                      const monitorName = getMonitorName(monitorId, monitorInfo);
+                      const monitorType = getMonitorType(monitorInfo);
                       const status = monitorInfo.last_status || "UNKNOWN";
+
                       const isUp = status === "UP";
                       const isDown = status === "DOWN";
                       const badgeVariant = isUp ? "success" : (isDown ? "destructive" : "secondary");
                       const badgeText = isUp ? "● ONLINE" : (isDown ? "● DOWN" : "○ UNKNOWN");
 
+                      const typeLabel = monitorType === "proxy" ? "Proxy" : "Website";
+                      const typeIcon = monitorType === "proxy" ? "🧦" : "🌐";
+
                       return React.createElement("div", {
-                        key: url,
+                        key: monitorId,
                         className: "flex items-center justify-between px-4 py-4"
                       },
                         React.createElement("div", {
-                          className: "flex flex-col gap-1 pr-4 truncate"
+                          className: "flex flex-col gap-1 pr-4 min-w-0"
                         },
+                          React.createElement("div", {
+                            className: "flex items-center gap-2 min-w-0"
+                          },
+                            React.createElement("span", {
+                              className: "text-sm font-semibold truncate"
+                            }, monitorName),
+
+                            React.createElement(Badge, {
+                              variant: "secondary",
+                              className: "text-[10px] px-2 py-0.5 shrink-0"
+                            }, typeIcon + " " + typeLabel)
+                          ),
+
                           React.createElement("span", {
-                            className: "text-sm font-semibold truncate"
-                          }, url),
+                            className: "text-xs text-muted-foreground truncate"
+                          }, monitorId),
 
                           React.createElement("span", {
                             className: "text-xs text-muted-foreground"
@@ -219,7 +248,7 @@
 
                           React.createElement(Button, {
                             onClick: function () {
-                              handleRemove(url);
+                              handleRemove(monitorId);
                             },
                             disabled: loading,
                             className: "text-xs border border-destructive/30 hover:bg-destructive/10 text-destructive px-3 py-1 cursor-pointer"

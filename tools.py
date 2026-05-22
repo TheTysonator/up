@@ -8,6 +8,22 @@ from . import _load_monitors, _save_monitors, _check_website
 
 # --- SCHEMAS ---
 
+
+ADD_MONITOR_PROXY_SCHEMA = {
+    "name": "add_monitor_proxy",
+    "description": "Add a PROXY to the background monitoring queue.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "name": {"type": "STRING", "description": "This is the name of the monitor."},
+            "config": {"type": "OBJECT", "description": "This is the configuration object for the monitor."},
+            "app": {"type": "STRING", "description": "This is the name of the app this monitor is associated with."}
+        },
+        "required": ["name", "config"]
+    }
+}
+
+
 ADD_MONITOR_SCHEMA = {
     "name": "add_monitor",
     "description": "Add a website URL to the background monitoring queue.",
@@ -59,6 +75,41 @@ def _handle_add_monitor(args: dict, **kw) -> str:
     monitors[url] = {"last_status": "UNKNOWN", "app": app}
     _save_monitors(monitors)
     return json.dumps({"success": True, "message": f"Successfully added {url} to the website monitor."})
+
+
+def _handle_add_monitor_proxy(args: dict, **kw) -> str:
+    app = args.get("app", "default").strip()
+    name = args.get("name", "").strip()
+    config = args.get("config")
+
+    if not name:
+        return json.dumps({"success": False, "error": "Proxy monitor name is required."})
+
+    if not isinstance(config, dict):
+        return json.dumps({"success": False, "error": "Proxy config must be a JSON object."})
+
+    monitors = _load_monitors()
+
+    monitor_key = f"proxy:{name}"
+
+    if monitor_key in monitors:
+        return json.dumps({"success": True, "message": f"{name} is already being monitored."})
+
+    monitors[monitor_key] = {
+        "type": "proxy",
+        "name": name,
+        "app": app,
+        "config": config,
+        "last_status": "UNKNOWN"
+    }
+
+    _save_monitors(monitors)
+
+    return json.dumps({
+        "success": True,
+        "message": f"Successfully added proxy monitor {name}."
+    })
+
 
 
 def _handle_remove_monitor(args: dict, **kw) -> str:
