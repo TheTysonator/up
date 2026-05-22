@@ -1,7 +1,4 @@
-/**
- * Website Monitor Dashboard Tab
- * Plain IIFE using globals from window.__HERMES_PLUGIN_SDK__
- */
+
 (function () {
   "use strict";
 
